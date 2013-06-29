@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		14EC6D6A177EB28800FBA698 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 14EC6D69177EB28800FBA698 /* main.cpp */; };
 		14EC6D6C177EB28800FBA698 /* httpclient.1 in CopyFiles */ = {isa = PBXBuildFile; fileRef = 14EC6D6B177EB28800FBA698 /* httpclient.1 */; };
+		14EC6D7A177F221800FBA698 /* libcurl.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EC6D79177F221800FBA698 /* libcurl.dylib */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -28,6 +29,7 @@
 		14EC6D66177EB28800FBA698 /* httpclient */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = httpclient; sourceTree = BUILT_PRODUCTS_DIR; };
 		14EC6D69177EB28800FBA698 /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
 		14EC6D6B177EB28800FBA698 /* httpclient.1 */ = {isa = PBXFileReference; lastKnownFileType = text.man; path = httpclient.1; sourceTree = "<group>"; };
+		14EC6D79177F221800FBA698 /* libcurl.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libcurl.dylib; path = usr/lib/libcurl.dylib; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -35,6 +37,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				14EC6D7A177F221800FBA698 /* libcurl.dylib in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -44,6 +47,7 @@
 		14EC6D5D177EB28800FBA698 = {
 			isa = PBXGroup;
 			children = (
+				14EC6D79177F221800FBA698 /* libcurl.dylib */,
 				14EC6D68177EB28800FBA698 /* httpclient */,
 				14EC6D67177EB28800FBA698 /* Products */,
 			);
@@ -184,6 +188,10 @@
 		14EC6D70177EB28800FBA698 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				GCC_VERSION = "";
+				HEADER_SEARCH_PATHS = "";
+				LIBRARY_SEARCH_PATHS = "";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -191,6 +199,10 @@
 		14EC6D71177EB28800FBA698 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				GCC_VERSION = "";
+				HEADER_SEARCH_PATHS = "";
+				LIBRARY_SEARCH_PATHS = "";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
