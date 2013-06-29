@@ -37,6 +37,8 @@
 #include <chrono>
 #include <functional>
 
+#define ARRAY_SIZEOF( array ) ( sizeof(array)/sizeof(array[0]) )
+
 // 通信完了時のコールバック
 typedef std::function<void(const char*, size_t)> RequestCompleteCallback;
 
@@ -99,24 +101,41 @@ private:
     RequestMethodType m_MethodType;
 };
 
-typedef unsigned int HttpHandle;
-
 /**
  *  1回分のHTTP通信処理オブジェクト
  */
 class HttpTransactionHandle
 {
 public:
-    HttpTransactionHandle( const HttpHandle handle )
+    typedef unsigned int HandleId;
+    
+public:
+    static const HandleId INVALID_HANDLE_ID = UINT32_MAX;
+    
+public:
+    HttpTransactionHandle( const HandleId handle=INVALID_HANDLE_ID )
     :m_Handle(handle)
     {
     }
     
+    HttpTransactionHandle( const HttpTransactionHandle&& handle )
+    :m_Handle(handle.m_Handle)
+    {
+    }
+    
 public:
-    HttpHandle GetHandle() const{ return m_Handle; }
+    HttpTransactionHandle& operator=( const HttpTransactionHandle& handle )
+    {
+        m_Handle = handle.m_Handle;
+        
+        return *this;
+    }
+    
+public:
+    HandleId GetHandleId() const{ return m_Handle; }
     
 private:
-    const HttpHandle m_Handle;
+    HandleId m_Handle;
 };
 
 
@@ -158,7 +177,7 @@ public:
         curl_easy_setopt(curl, CURLOPT_URL, request.GetUrl() );
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &HttpClient::_OnResponse );
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, transaction );
-        curl_multi_add_handle(m_MultiHandle, curl);
+        auto result = curl_multi_add_handle(m_MultiHandle, curl);
         
         auto handle = _CreateHandle();
         m_Handles[handle] = transaction;
@@ -169,7 +188,7 @@ public:
 public:
     bool IsCompleted( const HttpTransactionHandle& handle )
     {
-        HttpTransaction* transaction = _GetCurlHandle( handle.GetHandle() );
+        HttpTransaction* transaction = _GetCurlHandle( handle.GetHandleId() );
         if( transaction )
         {
             return transaction->IsCompleted();
@@ -183,10 +202,10 @@ public:
     
     bool ReleaseTransaction( const HttpTransactionHandle& handle )
     {
-        HttpTransaction* transaction = _GetCurlHandle( handle.GetHandle() );
+        HttpTransaction* transaction = _GetCurlHandle( handle.GetHandleId() );
         if( transaction )
         {
-            m_Handles.erase( handle.GetHandle() );
+            m_Handles.erase( handle.GetHandleId() );
             delete transaction;
 
             return true;
@@ -208,20 +227,23 @@ private:
 
 
 private:
-    HttpHandle _CreateHandle()
+    HttpTransactionHandle::HandleId _CreateHandle()
     {
-        HttpHandle dst;
+        HttpTransactionHandle::HandleId dst;
+        HttpTransactionHandle::HandleId src;
+        
         do
         {
-            dst = m_Lock;
-            dst = (dst + 1) % 0xffffffff; // オーバーフロー対策. 適当な数で折り返すように
+            src = m_Lock;
+            // オーバーフローしないように適当なところで折り返すように
+            dst = (dst+1) % 0xffffffff;
         }
-        while( std::atomic_exchange_explicit(&m_Lock, dst, std::memory_order_release) );
+        while( src != std::atomic_exchange(&m_Lock, dst ) );
         
         return dst;
     }
     
-    HttpTransaction* _GetCurlHandle( const HttpHandle& handle )
+    HttpTransaction* _GetCurlHandle( const HttpTransactionHandle::HandleId& handle )
     {
         auto it = m_Handles.find( handle );
         
@@ -236,32 +258,55 @@ private:
     }
     
 private:
-    static std::atomic<HttpHandle> m_Lock;
+    static std::atomic<HttpTransactionHandle::HandleId> m_Lock;
     
 private:
     CURLM* m_MultiHandle;
-    std::map<HttpHandle, HttpTransaction*> m_Handles;
+    std::map<HttpTransactionHandle::HandleId, HttpTransaction*> m_Handles;
     int m_HandleCount; // 接続中のハンドル数
 };
 
-std::atomic<HttpHandle> HttpClient::m_Lock = ATOMIC_VAR_INIT(0U);
+std::atomic<HttpTransactionHandle::HandleId> HttpClient::m_Lock = ATOMIC_VAR_INIT(0U);
 
 int main(int argc, const char * argv[])
 {
     auto time_point = std::chrono::system_clock::now();
     
-    HttpClient client;
-    auto handle = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), []( const char* data, size_t dataSize ){
-        
-        std::cout << data << std::endl;
-    } );
+    HttpTransactionHandle handles[10];
     
-    while( !client.IsCompleted( handle ) )
+    HttpClient client;
+    for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
+    {
+        handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), []( const char* data, size_t dataSize ){
+            
+            std::cout << data << std::endl;
+        } );
+    }
+    
+    while( true )
     {
         client.Update();
-    }
+
+        bool allCompleted = true;
+
+        for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
+        {
+            if( !client.IsCompleted( handles[i] ) )
+            {
+                allCompleted = false;
+            }
+        }
         
-    client.ReleaseTransaction( handle );
+        if( allCompleted )
+        {
+            break;
+        }
+    }
+    
+    for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
+    {
+        client.ReleaseTransaction( handles[i] );
+    }
     
     auto duration = std::chrono::system_clock::now() - time_point ;
     std::cout << duration.count() / 1000.0 / 1000.0 << std::endl ;
