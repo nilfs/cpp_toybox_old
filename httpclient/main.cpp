@@ -176,8 +176,6 @@ private:
     HandleId m_Handle;
 };
 
-std::mutex g_mutex;
-
 /**
  * Http通信をするクライアントクラス
  */
@@ -213,7 +211,7 @@ public:
             {
                 // 失敗しているので結果を返す
                 CURL* curl = msg->easy_handle;
-                std::lock_guard<std::mutex> lock( g_mutex );
+                std::lock_guard<std::mutex> lock( s_mutex );
                 auto it = std::find_if( m_Handles.begin(), m_Handles.end(), [curl]( std::pair< HttpTransactionHandle::HandleId, HttpTransaction*> v ){
                     return v.second->GetCurl() == curl;
                 } );
@@ -232,7 +230,7 @@ public:
     
     HttpTransactionHandle AddRequest( const HttpRequest& request, const RequestCompleteCallback& callback )
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::lock_guard<std::mutex> lock(s_mutex);
 
         auto transaction = new HttpTransaction( callback );
      
@@ -285,7 +283,7 @@ public:
         HttpTransaction* transaction = _GetCurlHandle( handle.GetHandleId() );
         if( transaction )
         {
-            std::lock_guard<std::mutex> lock(g_mutex);
+            std::lock_guard<std::mutex> lock(s_mutex);
             m_Handles.erase( handle.GetHandleId() );
             delete transaction;
             return true;
@@ -315,7 +313,7 @@ private:
     
     HttpTransaction* _GetCurlHandle( const HttpTransactionHandle::HandleId& handle )
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::lock_guard<std::mutex> lock(s_mutex);
 
         auto it = m_Handles.find( handle );
         
@@ -331,6 +329,7 @@ private:
     
 private:
     static std::atomic<HttpTransactionHandle::HandleId> m_Lock;
+    static std::mutex s_mutex;
     
 private:
     CURLM* m_MultiHandle;
