@@ -255,7 +255,7 @@ public:
                 break;
         }
         
-        auto result = curl_multi_add_handle(m_MultiHandle, curl);
+        curl_multi_add_handle(m_MultiHandle, curl);
         
         auto handle = _CreateHandle();
         m_Handles[handle] = transaction;
@@ -307,8 +307,8 @@ private:
 private:
     HttpTransactionHandle::HandleId _CreateHandle()
     {
-        std::atomic_fetch_add(&m_Lock, (HttpTransactionHandle::HandleId)1);
-        return m_Lock;
+        std::atomic_fetch_add(&s_TopHandleId, (HttpTransactionHandle::HandleId)1);
+        return s_TopHandleId;
     }
     
     HttpTransaction* _GetCurlHandle( const HttpTransactionHandle::HandleId& handle )
@@ -328,7 +328,7 @@ private:
     }
     
 private:
-    static std::atomic<HttpTransactionHandle::HandleId> m_Lock;
+    static std::atomic<HttpTransactionHandle::HandleId> s_TopHandleId;
     static std::mutex s_mutex;
     
 private:
@@ -337,7 +337,8 @@ private:
     int m_HandleCount; // 接続中のハンドル数
 };
 
-std::atomic<HttpTransactionHandle::HandleId> HttpClient::m_Lock = ATOMIC_VAR_INIT(0U);
+std::atomic<HttpTransactionHandle::HandleId> HttpClient::s_TopHandleId = ATOMIC_VAR_INIT(0U);
+std::mutex HttpClient::s_mutex;
 
 int main(int argc, const char * argv[])
 {
