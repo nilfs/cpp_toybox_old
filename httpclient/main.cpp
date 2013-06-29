@@ -246,18 +246,8 @@ private:
 private:
     HttpTransactionHandle::HandleId _CreateHandle()
     {
-        HttpTransactionHandle::HandleId dst;
-        HttpTransactionHandle::HandleId src;
-        
-        do
-        {
-            src = m_Lock;
-            // オーバーフローしないように適当なところで折り返すように
-            dst = (dst+1) % 0xffffffff;
-        }
-        while( src != std::atomic_exchange(&m_Lock, dst ) );
-        
-        return dst;
+        std::atomic_fetch_add(&m_Lock, (HttpTransactionHandle::HandleId)1);
+        return m_Lock;
     }
     
     HttpTransaction* _GetCurlHandle( const HttpTransactionHandle::HandleId& handle )
@@ -293,12 +283,15 @@ int main(int argc, const char * argv[])
     
     HttpTransactionHandle handles[10];
     
+    std::atomic<int> val(0);
     HttpClient client;
     for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
     {
-        auto thread = std::thread( [&handles, &client, i](){
-            handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), []( const char* data, size_t dataSize ){
+        auto thread = std::thread( [&val, &handles, &client, i](){
+            handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), [&val]( const char* data, size_t dataSize ){
                 
+                std::atomic_fetch_add(&val, 1);
+                std::cout << "val : " << val << std::endl;
                 std::cout << data << std::endl;
             } );
         } );
