@@ -36,6 +36,8 @@
 #include <map>
 #include <chrono>
 #include <functional>
+#include <thread>
+#include <mutex>
 
 #define ARRAY_SIZEOF( array ) ( sizeof(array)/sizeof(array[0]) )
 
@@ -110,7 +112,16 @@ public:
     typedef unsigned int HandleId;
     
 public:
+    // 不正なハンドルID
     static const HandleId INVALID_HANDLE_ID = UINT32_MAX;
+    
+public:
+    // 不要なハンドルを返す
+    static const HttpTransactionHandle& Invalid()
+    {
+        static HttpTransactionHandle s_Invalid;
+        return s_Invalid;
+    }
     
 public:
     HttpTransactionHandle( const HandleId handle=INVALID_HANDLE_ID )
@@ -134,10 +145,14 @@ public:
 public:
     HandleId GetHandleId() const{ return m_Handle; }
     
+    bool IsInvalid() const { return m_Handle == INVALID_HANDLE_ID; }
+    bool IsValid()   const { return m_Handle != INVALID_HANDLE_ID; }
+    
 private:
     HandleId m_Handle;
 };
 
+std::mutex g_mutex;
 
 /**
  * Http通信をするクライアントクラス
@@ -171,6 +186,8 @@ public:
     
     HttpTransactionHandle AddRequest( const HttpRequest& request, const RequestCompleteCallback& callback )
     {
+        std::lock_guard<std::mutex> lock(g_mutex);
+
         auto transaction = new HttpTransaction( callback );
      
         CURL* curl = transaction->GetCurl();
@@ -181,7 +198,7 @@ public:
         
         auto handle = _CreateHandle();
         m_Handles[handle] = transaction;
-
+        
         return HttpTransactionHandle( handle );
     }
         
@@ -205,9 +222,9 @@ public:
         HttpTransaction* transaction = _GetCurlHandle( handle.GetHandleId() );
         if( transaction )
         {
+            std::lock_guard<std::mutex> lock(g_mutex);
             m_Handles.erase( handle.GetHandleId() );
             delete transaction;
-
             return true;
         }
         else
@@ -245,6 +262,8 @@ private:
     
     HttpTransaction* _GetCurlHandle( const HttpTransactionHandle::HandleId& handle )
     {
+        std::lock_guard<std::mutex> lock(g_mutex);
+
         auto it = m_Handles.find( handle );
         
         if( it != m_Handles.end() )
@@ -277,10 +296,13 @@ int main(int argc, const char * argv[])
     HttpClient client;
     for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
     {
-        handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), []( const char* data, size_t dataSize ){
-            
-            std::cout << data << std::endl;
+        auto thread = std::thread( [&handles, &client, i](){
+            handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), []( const char* data, size_t dataSize ){
+                
+                std::cout << data << std::endl;
+            } );
         } );
+        thread.detach();
     }
     
     while( true )
