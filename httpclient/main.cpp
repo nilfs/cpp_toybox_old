@@ -41,16 +41,21 @@
 
 #define ARRAY_SIZEOF( array ) ( sizeof(array)/sizeof(array[0]) )
 
+class HttpTransaction;
+
+
+
 // 通信完了時のコールバック
-typedef std::function<void(const char*, size_t)> RequestCompleteCallback;
+typedef std::function<void(const HttpTransaction&, const char*, size_t)> RequestCompleteCallback;
 
 class HttpTransaction
-{
+{    
 public:
     HttpTransaction( const RequestCompleteCallback& callback )
     :m_Curl(nullptr)
     ,m_Callback(callback)
     ,m_Completed(false)
+    ,m_RequestResult(CURL_LAST) // 無効値がなかったのでとりあえずCURL_LAST
     {
         m_Curl = curl_easy_init();
     }
@@ -64,19 +69,28 @@ public:
 public:
     CURL* GetCurl() { return m_Curl; }
     
-    void OnResponse( const char* data, size_t dataSize )
+    void OnResponse( const char* data, size_t dataSize, CURLcode result )
     {
-        m_Callback( data, dataSize );
+        m_RequestResult = result;
+
+        m_Callback( *this, data, dataSize );
         
         m_Completed = true;
     }
     
-    bool IsCompleted() const { return m_Completed; }
+    // 成功、失敗に関わらず処理が終わった
+    bool IsCompleted() const { return m_RequestResult != CURL_LAST; }
+    // 成功した
+    bool IsOk() const { return m_RequestResult == CURLE_OK; }
+    // タイムアウトした
+    bool IsTimeout() const { return m_RequestResult == CURLE_OPERATION_TIMEDOUT; }
     
 private:
     CURL* m_Curl;
     RequestCompleteCallback m_Callback;
     bool m_Completed;
+    
+    CURLcode m_RequestResult;
 };
 
 class HttpRequest
@@ -93,20 +107,24 @@ public:
     :m_Url(url)
     ,m_MethodType(method)
     ,m_PostField(nullptr)
+    ,m_Timeout(0.f)
     {}
     
 public:
     void SetPostField( const char* field ){ m_PostField = field; }
+    void SetTimeout( float timeout ){ m_Timeout = timeout; }
     
     const char* GetUrl() const { return m_Url; }
     const char* GetPostField() const { return m_PostField; }
     RequestMethodType GetMethodType() const { return m_MethodType; }
+    float GetTimeout() const { return m_Timeout; }
     
 private:
     // コピーするかどうか迷ったけど、一旦コピーしない形で
     const char* m_Url;
     const char* m_PostField;
     RequestMethodType m_MethodType;
+    float m_Timeout;
 };
 
 /**
@@ -187,6 +205,28 @@ public:
         int msgs_left = 0;
         while ((msg = curl_multi_info_read(m_MultiHandle, &msgs_left))) {
             // 特に使わないので捨てておく
+            if( msg->data.result == CURLE_OK )
+            {
+                // 成功なのでそのまま
+            }
+            else
+            {
+                // 失敗しているので結果を返す
+                CURL* curl = msg->easy_handle;
+                std::lock_guard<std::mutex> lock( g_mutex );
+                auto it = std::find_if( m_Handles.begin(), m_Handles.end(), [curl]( std::pair< HttpTransactionHandle::HandleId, HttpTransaction*> v ){
+                    return v.second->GetCurl() == curl;
+                } );
+                
+                if( it != m_Handles.end() )
+                {
+                    it->second->OnResponse(nullptr, 0, msg->data.result);
+                }
+                else
+                {
+                    // @todo エラー処理。想定しない状態なのでエラーログとか出しておくべき
+                }
+            }
         }
     }
     
@@ -200,6 +240,11 @@ public:
         curl_easy_setopt(curl, CURLOPT_URL, request.GetUrl() );
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &HttpClient::_OnResponse );
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, transaction );
+        
+        if( 0 < request.GetTimeout() )
+        {
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(request.GetTimeout() * 1000) );
+        }
         
         switch( request.GetMethodType() )
         {
@@ -256,7 +301,7 @@ private:
     static size_t _OnResponse(void *ptr, size_t size, size_t count, void *transaction) {
 
         const size_t dataSize = size*count;
-        ((HttpTransaction*)transaction)->OnResponse((char*)ptr, dataSize);
+        ((HttpTransaction*)transaction)->OnResponse((char*)ptr, dataSize, CURLE_OK);
         
         return dataSize;
     }
@@ -297,8 +342,8 @@ std::atomic<HttpTransactionHandle::HandleId> HttpClient::m_Lock = ATOMIC_VAR_INI
 
 int main(int argc, const char * argv[])
 {
-    // GET Methodのテスト
     HttpClient client;
+    // GET Methodのテスト
     {
         auto time_point = std::chrono::system_clock::now();
         
@@ -308,11 +353,19 @@ int main(int argc, const char * argv[])
         for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
         {
             auto thread = std::thread( [&val, &handles, &client, i](){
-                handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), [&val]( const char* data, size_t dataSize ){
+                handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ),
+                                               [&val]( const HttpTransaction& transaction, const char* data, size_t dataSize ){
                     
-                    std::atomic_fetch_add(&val, 1);
-                    std::cout << "val : " << val << std::endl;
-                    std::cout << data << std::endl;
+                    if( transaction.IsOk() )
+                    {
+                        std::atomic_fetch_add(&val, 1);
+                        std::cout << "val : " << val << std::endl;
+                        std::cout << data << std::endl;
+                    }
+                    else
+                    {
+                        std::cout << "error" << std::endl;
+                    }
                 } );
             } );
             thread.detach();
@@ -346,14 +399,24 @@ int main(int argc, const char * argv[])
         auto duration = std::chrono::system_clock::now() - time_point ;
         std::cout << "google.co.jpにGETするのにかかった時間" << duration.count() / 1000.0 / 1000.0 << std::endl ;
     }
-    
+
     // POSTメソッドのテスト。google.co.jpはpostには対応していないのでエラーが返ってくる
     {
+        auto time_point = std::chrono::system_clock::now();
+
         HttpRequest request( "http://google.co.jp", HttpRequest::POST );
         request.SetPostField("name=hoge");
-        auto handle = client.AddRequest( request, []( const char* data, size_t dataSize ){
-        
-            std::cout << data << std::endl;
+        request.SetTimeout(1.0f);
+        auto handle = client.AddRequest( request, []( const HttpTransaction& transaction, const char* data, size_t dataSize ){
+
+            if( transaction.IsOk() )
+            {
+                std::cout << data << std::endl;
+            }
+            else if( transaction.IsTimeout() )
+            {
+                std::cout << "timeout..." << std::endl;
+            }
             
         });
         
@@ -361,6 +424,9 @@ int main(int argc, const char * argv[])
         {
             client.Update();
         }
+        
+        auto duration = std::chrono::system_clock::now() - time_point ;
+        std::cout << "google.co.jpにPOSTするのにかかった時間" << duration.count() / 1000.0 / 1000.0 << std::endl ;
     }
     return 0;
 }
