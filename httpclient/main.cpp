@@ -174,9 +174,9 @@ public:
     }
         
 public:
-    bool IsCompleted( const HttpTransactionHandle& response )
+    bool IsCompleted( const HttpTransactionHandle& handle )
     {
-        HttpTransaction* transaction = _GetCurlHandle( response.GetHandle() );
+        HttpTransaction* transaction = _GetCurlHandle( handle.GetHandle() );
         if( transaction )
         {
             return transaction->IsCompleted();
@@ -188,12 +188,12 @@ public:
         }
     }
     
-    bool ReleaseTransaction( const HttpTransactionHandle& response )
+    bool ReleaseTransaction( const HttpTransactionHandle& handle )
     {
-        HttpTransaction* transaction = _GetCurlHandle( response.GetHandle() );
+        HttpTransaction* transaction = _GetCurlHandle( handle.GetHandle() );
         if( transaction )
         {
-            m_Handles.erase( response.GetHandle() );
+            m_Handles.erase( handle.GetHandle() );
             delete transaction;
 
             return true;
@@ -258,17 +258,17 @@ int main(int argc, const char * argv[])
     auto time_point = std::chrono::system_clock::now();
     
     HttpClient client;
-    auto respone = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), []( const char* data, size_t dataSize ){
+    auto handle = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), []( const char* data, size_t dataSize ){
         
         std::cout << data << std::endl;
     } );
     
-    while( !client.IsCompleted( respone ) )
+    while( !client.IsCompleted( handle ) )
     {
         client.Update();
     }
-    
-    client.ReleaseTransaction( respone );
+        
+    client.ReleaseTransaction( handle );
     
     auto duration = std::chrono::system_clock::now() - time_point ;
     std::cout << duration.count() / 1000.0 / 1000.0 << std::endl ;
