@@ -113,17 +113,10 @@ public:
     }
     
 public:
-    void SetCallback( std::function<void(char*, size_t)> callback )
-    {
-        m_Callback = callback;
-    }
-    
-public:
     HttpHandle GetHandle() const{ return m_Handle; }
     
 private:
     const HttpHandle m_Handle;
-    std::function<void(char*, size_t)> m_Callback;
 };
 
 
