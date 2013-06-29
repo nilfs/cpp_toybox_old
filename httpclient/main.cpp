@@ -92,14 +92,20 @@ public:
     HttpRequest( const char* url, RequestMethodType method )
     :m_Url(url)
     ,m_MethodType(method)
+    ,m_PostField(nullptr)
     {}
     
 public:
+    void SetPostField( const char* field ){ m_PostField = field; }
+    
     const char* GetUrl() const { return m_Url; }
+    const char* GetPostField() const { return m_PostField; }
+    RequestMethodType GetMethodType() const { return m_MethodType; }
     
 private:
     // コピーするかどうか迷ったけど、一旦コピーしない形で
     const char* m_Url;
+    const char* m_PostField;
     RequestMethodType m_MethodType;
 };
 
@@ -194,6 +200,18 @@ public:
         curl_easy_setopt(curl, CURLOPT_URL, request.GetUrl() );
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &HttpClient::_OnResponse );
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, transaction );
+        
+        switch( request.GetMethodType() )
+        {
+            case HttpRequest::POST:
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request.GetPostField());
+                break;
+                
+            case HttpRequest::GET:
+            default:
+                break;
+        }
+        
         auto result = curl_multi_add_handle(m_MultiHandle, curl);
         
         auto handle = _CreateHandle();
@@ -234,6 +252,7 @@ public:
     }
     
 private:
+    // 受信完了したときのコールバック関数
     static size_t _OnResponse(void *ptr, size_t size, size_t count, void *transaction) {
 
         const size_t dataSize = size*count;
@@ -241,7 +260,6 @@ private:
         
         return dataSize;
     }
-
 
 private:
     HttpTransactionHandle::HandleId _CreateHandle()
@@ -279,53 +297,71 @@ std::atomic<HttpTransactionHandle::HandleId> HttpClient::m_Lock = ATOMIC_VAR_INI
 
 int main(int argc, const char * argv[])
 {
-    auto time_point = std::chrono::system_clock::now();
-    
-    HttpTransactionHandle handles[10];
-    
-    std::atomic<int> val(0);
+    // GET Methodのテスト
     HttpClient client;
-    for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
     {
-        auto thread = std::thread( [&val, &handles, &client, i](){
-            handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), [&val]( const char* data, size_t dataSize ){
-                
-                std::atomic_fetch_add(&val, 1);
-                std::cout << "val : " << val << std::endl;
-                std::cout << data << std::endl;
-            } );
-        } );
-        thread.detach();
-    }
-    
-    while( true )
-    {
-        client.Update();
-
-        bool allCompleted = true;
-
+        auto time_point = std::chrono::system_clock::now();
+        
+        HttpTransactionHandle handles[10];
+        
+        std::atomic<int> val(0);
         for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
         {
-            if( !client.IsCompleted( handles[i] ) )
+            auto thread = std::thread( [&val, &handles, &client, i](){
+                handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ), [&val]( const char* data, size_t dataSize ){
+                    
+                    std::atomic_fetch_add(&val, 1);
+                    std::cout << "val : " << val << std::endl;
+                    std::cout << data << std::endl;
+                } );
+            } );
+            thread.detach();
+        }
+        
+        while( true )
+        {
+            client.Update();
+            
+            bool allCompleted = true;
+            
+            for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
             {
-                allCompleted = false;
+                if( !client.IsCompleted( handles[i] ) )
+                {
+                    allCompleted = false;
+                }
+            }
+            
+            if( allCompleted )
+            {
+                break;
             }
         }
         
-        if( allCompleted )
+        for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
         {
-            break;
+            client.ReleaseTransaction( handles[i] );
+        }
+        
+        auto duration = std::chrono::system_clock::now() - time_point ;
+        std::cout << "google.co.jpにGETするのにかかった時間" << duration.count() / 1000.0 / 1000.0 << std::endl ;
+    }
+    
+    // POSTメソッドのテスト。google.co.jpはpostには対応していないのでエラーが返ってくる
+    {
+        HttpRequest request( "http://google.co.jp", HttpRequest::POST );
+        request.SetPostField("name=hoge");
+        auto handle = client.AddRequest( request, []( const char* data, size_t dataSize ){
+        
+            std::cout << data << std::endl;
+            
+        });
+        
+        while( !client.IsCompleted(handle) )
+        {
+            client.Update();
         }
     }
-    
-    for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
-    {
-        client.ReleaseTransaction( handles[i] );
-    }
-    
-    auto duration = std::chrono::system_clock::now() - time_point ;
-    std::cout << duration.count() / 1000.0 / 1000.0 << std::endl ;
-
     return 0;
 }
 
