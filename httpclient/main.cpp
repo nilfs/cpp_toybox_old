@@ -41,15 +41,14 @@
 
 #define ARRAY_SIZEOF( array ) ( sizeof(array)/sizeof(array[0]) )
 
-class HttpTransaction;
 
-
-
-// 通信完了時のコールバック
-typedef std::function<void(const HttpTransaction&, const char*, size_t)> RequestCompleteCallback;
 
 class HttpTransaction
-{    
+{
+public:
+    // 通信完了時のコールバック。エラーでも来る
+    typedef std::function<void(const HttpTransaction&, const char*, size_t)> RequestCompleteCallback;
+
 public:
     HttpTransaction( const RequestCompleteCallback& callback )
     :m_Curl(nullptr)
@@ -228,7 +227,7 @@ public:
         }
     }
     
-    HttpTransactionHandle AddRequest( const HttpRequest& request, const RequestCompleteCallback& callback )
+    HttpTransactionHandle AddRequest( const HttpRequest& request, const HttpTransaction::RequestCompleteCallback& callback )
     {
         std::lock_guard<std::mutex> lock(s_mutex);
 
