@@ -50,10 +50,11 @@ public:
     typedef std::function<void(const HttpTransaction&, const char*, size_t)> RequestCompleteCallback;
 
 public:
-    HttpTransaction( const RequestCompleteCallback& callback )
+    HttpTransaction( const RequestCompleteCallback& callback, bool autoRelase )
     :m_Curl(nullptr)
     ,m_Callback(callback)
     ,m_Completed(false)
+    ,m_AutoRelease(autoRelase)
     ,m_RequestResult(CURL_LAST) // 無効値がなかったのでとりあえずCURL_LAST
     {
         m_Curl = curl_easy_init();
@@ -78,16 +79,19 @@ public:
     }
     
     // 成功、失敗に関わらず処理が終わった
-    bool IsCompleted() const { return m_RequestResult != CURL_LAST; }
+    bool IsCompleted()   const { return m_RequestResult != CURL_LAST; }
     // 成功した
-    bool IsOk() const { return m_RequestResult == CURLE_OK; }
+    bool IsOk()          const { return m_RequestResult == CURLE_OK; }
     // タイムアウトした
-    bool IsTimeout() const { return m_RequestResult == CURLE_OPERATION_TIMEDOUT; }
+    bool IsTimeout()     const { return m_RequestResult == CURLE_OPERATION_TIMEDOUT; }
+    // 自動解放するか
+    bool IsAutoRelease() const { return m_AutoRelease; }
     
 private:
     CURL* m_Curl;
     RequestCompleteCallback m_Callback;
     bool m_Completed;
+    bool m_AutoRelease;
     
     CURLcode m_RequestResult;
 };
@@ -168,8 +172,8 @@ public:
 public:
     HandleId GetHandleId() const{ return m_Handle; }
     
-    bool IsInvalid() const { return m_Handle == INVALID_HANDLE_ID; }
-    bool IsValid()   const { return m_Handle != INVALID_HANDLE_ID; }
+    bool IsInvalid()     const { return m_Handle == INVALID_HANDLE_ID; }
+    bool IsValid()       const { return m_Handle != INVALID_HANDLE_ID; }
     
 private:
     HandleId m_Handle;
@@ -227,11 +231,11 @@ public:
         }
     }
     
-    HttpTransactionHandle AddRequest( const HttpRequest& request, const HttpTransaction::RequestCompleteCallback& callback )
+    HttpTransactionHandle CreateRequest( const HttpRequest& request, const HttpTransaction::RequestCompleteCallback& callback, bool autoRelease=true )
     {
         std::lock_guard<std::mutex> lock(s_mutex);
 
-        auto transaction = new HttpTransaction( callback );
+        auto transaction = new HttpTransaction( callback, autoRelease );
      
         CURL* curl = transaction->GetCurl();
         curl_easy_setopt(curl, CURLOPT_URL, request.GetUrl() );
@@ -298,8 +302,9 @@ private:
     static size_t _OnResponse(void *ptr, size_t size, size_t count, void *transaction) {
 
         const size_t dataSize = size*count;
-        ((HttpTransaction*)transaction)->OnResponse((char*)ptr, dataSize, CURLE_OK);
-        
+        HttpTransaction* _trancation = reinterpret_cast<HttpTransaction*>(transaction);
+        _trancation->OnResponse((char*)ptr, dataSize, CURLE_OK);
+                
         return dataSize;
     }
 
@@ -352,7 +357,7 @@ int main(int argc, const char * argv[])
         for( int i=0; i<ARRAY_SIZEOF(handles); ++i )
         {
             auto thread = std::thread( [&val, &handles, &client, i](){
-                handles[i] = client.AddRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ),
+                handles[i] = client.CreateRequest( HttpRequest( "http://google.co.jp", HttpRequest::GET ),
                                                [&val]( const HttpTransaction& transaction, const char* data, size_t dataSize ){
                     
                     if( transaction.IsOk() )
@@ -365,7 +370,7 @@ int main(int argc, const char * argv[])
                     {
                         std::cout << "error" << std::endl;
                     }
-                } );
+                }, false );
             } );
             thread.detach();
         }
@@ -406,7 +411,7 @@ int main(int argc, const char * argv[])
         HttpRequest request( "http://google.co.jp", HttpRequest::POST );
         request.SetPostField("name=hoge");
         request.SetTimeout(1.0f);
-        auto handle = client.AddRequest( request, []( const HttpTransaction& transaction, const char* data, size_t dataSize ){
+        auto handle = client.CreateRequest( request, []( const HttpTransaction& transaction, const char* data, size_t dataSize ){
 
             if( transaction.IsOk() )
             {
